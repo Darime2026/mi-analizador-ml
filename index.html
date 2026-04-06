@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Facturas ML</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <div class="bg-green-600 p-6 rounded-xl shadow-lg mb-8 text-white text-center border-2 border-dashed border-white/50">
+            <h2 class="text-xl font-bold mb-2">Panel de Control de Facturación</h2>
+            <input type="file" id="upload" accept=".xlsx" class="block w-full text-sm text-gray-200 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-white file:text-green-700 hover:file:bg-gray-100 cursor-pointer"/>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-blue-500">
+                <p class="text-gray-400 text-xs font-bold uppercase tracking-wider">Monto Total</p>
+                <h3 id="montoTotal" class="text-3xl font-black text-blue-800">Bs 0.00</h3>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-orange-500">
+                <p class="text-gray-400 text-xs font-bold uppercase tracking-wider">Unidades Vendidas</p>
+                <h3 id="unidadesTotal" class="text-3xl font-black text-gray-800">0</h3>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-green-500">
+                <p class="text-gray-400 text-xs font-bold uppercase tracking-wider">Total Ventas (TXS)</p>
+                <h3 id="ventasTotal" class="text-3xl font-black text-gray-800">0</h3>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-purple-500">
+                <p class="text-gray-400 text-xs font-bold uppercase tracking-wider">Ticket Promedio</p>
+                <h3 id="ticketProm" class="text-2xl font-black text-gray-800">Bs 0</h3>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm">
+                <h4 class="font-bold mb-4 text-gray-700">Análisis de Ingresos por Producto</h4>
+                <canvas id="graficoBarras" height="150"></canvas>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm">
+                <h4 class="font-bold mb-4 text-gray-700">Ranking de Publicaciones</h4>
+                <div id="rankingLista" class="space-y-4">
+                    <p class="text-gray-400 text-sm italic">Carga un archivo para ver el ranking...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chartInstance = null;
+
+        document.getElementById('upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                const data = new Uint8Array(event.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const json = XLSX.utils.sheet_to_json(worksheet);
+
+                procesarDatos(json);
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function procesarDatos(datos) {
+            let totalBs = 0;
+            let totalUnds = 0;
+            let totalVentas = 0;
+            let productosMap = {};
+
+            datos.forEach(fila => {
+                // Ajustamos a los nombres de columna de tu imagen
+                const ingreso = parseFloat(fila['Ingresos']) || 0;
+                const unidades = parseInt(fila['Unidades vendidas']) || 0;
+                const ventas = parseInt(fila['Ventas']) || 0;
+                const titulo = fila['Título'] || 'Sin nombre';
+
+                totalBs += ingreso;
+                totalUnds += unidades;
+                totalVentas += ventas;
+
+                if (!productosMap[titulo]) productosMap[titulo] = 0;
+                productosMap[titulo] += ingreso;
+            });
+
+            // Actualizar Tarjetas
+            document.getElementById('montoTotal').innerText = 'Bs ' + totalBs.toLocaleString('es-VE');
+            document.getElementById('unidadesTotal').innerText = totalUnds;
+            document.getElementById('ventasTotal').innerText = totalVentas;
+            document.getElementById('ticketProm').innerText = 'Bs ' + (totalBs / (totalVentas || 1)).toFixed(2);
+
+            // Generar Ranking Visual
+            const sortedProd = Object.entries(productosMap).sort((a,b) => b[1] - a[1]).slice(0, 5);
+            let rankingHtml = '';
+            sortedProd.forEach(([name, val]) => {
+                rankingHtml += `
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="truncate w-40 font-medium">${name}</span>
+                            <span class="font-bold text-blue-600">${((val/totalBs)*100).toFixed(1)}%</span>
+                        </div>
+                        <div class="w-full bg-gray-100 rounded-full h-2">
+                            <div class="bg-blue-500 h-2 rounded-full" style="width: ${(val/totalBs)*100}%"></div>
+                        </div>
+                    </div>`;
+            });
+            document.getElementById('rankingLista').innerHTML = rankingHtml;
+
+            // Actualizar Gráfico
+            actualizarGrafico(sortedProd);
+        }
+
+        function actualizarGrafico(datosRanking) {
+            const ctx = document.getElementById('graficoBarras').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+            
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: datosRanking.map(d => d[0].substring(0, 15) + '...'),
+                    datasets: [{
+                        label: 'Ingresos por Producto (Bs)',
+                        data: datosRanking.map(d => d[1]),
+                        backgroundColor: '#3b82f6',
+                        borderRadius: 8
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+        }
+    </script>
+</body>
+</html>
